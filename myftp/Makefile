@@ -1,4 +1,4 @@
-# makefile for c_ex3
+# makefile for myftp
 
 myftp: myftp.o token.o
 	gcc myftp.o token.o -o myftp

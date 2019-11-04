@@ -14,11 +14,30 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <errno.h>
-
+#include <signal.h>
 
 #define KAVI 40714
 #define PORT 40714
-#define BUFSIZE 512
+#define BUFSIZE (1024*256)
+
+
+
+// Global that holds current directory
+char g_path[255];
+
+typedef struct {
+    char opCode;
+    int messageSize;
+    char message[512];
+} msgStruct;
+
+typedef struct {
+    char opCode;
+    int messageSize;
+    int ackCode;
+    char * message;
+} msgStructServer;
+
 
 /*
  * Initilise the server
@@ -59,89 +78,277 @@ int initServer(){
     return (socketfd);
 }
 
-void reverse(char *s, int len)
-{
-    char c;   
-    int i, j;
+/**
+ * 
+ * Logger, writes to log.txt
+ */
 
-    for (i=0, j = len-1; i<j; i++, j--) {
-        c = s[i]; s[i] = s[j]; s[j] = c;
-    }
+void logger(char * log) {
+	FILE *file;
+	file = fopen("log.txt","a");
+	if(file != NULL) {
+		fprintf(file,"%s\n",log);
+		fclose(file);
+	}
 }
 
+/**
+ * Claim Zombies processes
+ */ 
+void claimZombies() {
+	pid_t pid;
+
+	while(pid > 0) {
+		pid = waitpid(0, (int*)0, WNOHANG); //claim
+	}
+}
+
+/**
+ * Run the server as daemon 
+ */
+
+void initDaemon(void) {
+	pid_t pid;
+	struct sigaction act;
+
+	if ((pid = fork()) < 0) {
+		exit(1);
+	} else if (pid != 0) {
+		exit(0);
+	}
+
+	setsid(); //become session leader
+	umask(0); //clear file mode 
+	
+	act.sa_handler = claimZombies;
+	sigemptyset(&(act.sa_mask));
+	act.sa_flags = SA_NOCLDSTOP;
+	
+	if((sigaction(SIGCHLD, &act, (struct sigaction*)0)) != 0) {
+		exit(1);
+	}
+}
+
+
 void serveClient(int sd)
-{   int nr, nw, i=0;
-    char buf[BUFSIZE];
-    
+{   int nr, nw, i=0, filefd;
+    char buf[BUFSIZE], buf1[BUFSIZE];
+    char sendBuffer[1024], fileLenStr[100], log[256];
+    char * token [2];
+    long filelength = 0;
+    char *toClient = (char *) calloc(1024, sizeof(char)); 
+    int toClientSize = 0;
+    msgStruct clientMessage;
+    msgStructServer serverMessage;
+    struct stat obj;
+    char * fullFilepath;
+    char msgServer[BUFSIZE];
 
     while (++i){
-        printf("serving client");
+        getcwd(g_path, 255); //set cwd to global path
 
-         /* read data from client */
-         if ((nr = read(sd, buf, sizeof(buf))) <= 0) 
-             exit(0);   /* connection broken down */
-         printf("server[%d]: %d bytes received\n", i, nr);
+        // read the command from client
+        if ((nr = read(sd, &clientMessage, 1024)) <= 0) 
+            exit(0);   /* connection broken down */
 
-         /* process the data we have received */
-         reverse(buf, nr);
-         printf("server[%d]: %d bytes processed\n", i, nr); 
+        // printf("%c\n", clientMessage.opCode);
+        // printf("message nr %i\n", nr);
+        // printf("size %i\n", clientMessage.messageSize);
 
-         /* send results to client */
-         nw = write(sd, buf, nr);
-         printf("server[%d]: %d bytes sent out\n", i, nw); 
+        // printf("message nr %i", nr);
+        // printf("message %s\n", clientMessage.message);
+        // msgStruct cliMsg = (msgStruct)clientMessage;
+
+        if (clientMessage.opCode == '0') {
+            // logger("Command: pwd\n");
+            sprintf(log, "server[%d]: received command pwd\n", i); 
+            logger(log);
+
+            sprintf(fileLenStr, "%li", sizeof(g_path));
+            write(sd, fileLenStr, sizeof(fileLenStr));
+            
+            nw = write(sd, g_path, sizeof(g_path));
+            // serverMessage.opCode = '0';
+            // serverMessage.messageSize = sizeof(g_path);
+            // strcpy(serverMessage.message, g_path);
+            // // strcpy(sendBuffer, g_path);
+            // nw = write(sd, &serverMessage, sizeof(serverMessage));
+            sprintf(log, "server[%d]: completed. %d bytes sent out\n", i, nw); 
+            logger(log);
+        }
+        else if (clientMessage.opCode ==  '2'){
+            sprintf(log, "server[%d]: received command dir\n", i); 
+            logger(log);
+            system("ls>temp.txt");		// Run the command line ls
+			stat("temp.txt", &obj);		// Read the properties of the file into the obj struct
+			filelength = obj.st_size;
+            char fileBuffer[filelength];	
+			filefd = open("temp.txt", O_RDONLY);
+
+            if (filefd < 0) { 
+                perror("reading dir"); 
+                serverMessage.opCode = '2';
+                serverMessage.ackCode = 1;
+            }
+            else{
+                toClientSize = read(filefd, fileBuffer, filelength);
+
+                sprintf(fileLenStr, "%li", filelength);
+                printf("c --- %s", fileLenStr);
+                write(sd, fileLenStr, sizeof(fileLenStr));
+                
+                nw = write(sd, fileBuffer, sizeof(fileBuffer));
+                printf("server[%d]: %d bytes sent out, %s\n", i, nw, fileBuffer); 
+
+                // serverMessage.opCode = '2';
+                // serverMessage.ackCode = '0';
+                // serverMessage.messageSize = sizeof(filelength);
+                // strcpy(serverMessage.message, fileBuffer);
+                // printf("toclisize: %i,filelen: %s", toClientSize, serverMessage.message);
+
+
+            } 
+            sprintf(log, "server[%d]: completed. %d bytes sent out\n", i, nw); 
+            logger(log);
+
+            // nw = write(sd, &serverMessage, sizeof(serverMessage));
+            // printf("server[%d]: %d bytes sent out, %s\n", i, nw, serverMessage.message); 
+        }
+        else if (clientMessage.opCode == '4') {
+            sprintf(log, "server[%d]: received command cd \n", i); 
+            logger(log);
+            // printf("Command: cd\n");
+            if (chdir(clientMessage.message) >= 0){
+                printf("%s\n",getcwd(g_path, 100));
+                strcpy(sendBuffer, g_path);
+               
+                serverMessage.opCode = '4';
+                serverMessage.ackCode = 0;
+                serverMessage.messageSize = 0;
+                // strcpy(serverMessage.message, ""); //dyld: lazy symbol binding failed: symbol is not in trie
+                
+            }
+            else {
+                perror("dir error");
+                serverMessage.opCode = '4';
+                serverMessage.ackCode = 1;
+                // strcpy(sendBuffer, "1"); ;
+            }
+
+            nw = write(sd, &serverMessage, sizeof(serverMessage));
+            sprintf(log, "server[%d]: completed. %d bytes sent out\n", i, nw); 
+            logger(log);
+            // printf("server[%d]: %d bytes sent out, %i\n", i, nw, serverMessage.ackCode); 
+            
+        }
+        else if(clientMessage.opCode == '6'){
+            sprintf(log, "server[%d]: received command get \n", i); 
+            logger(log);
+            // printf("%s","fullFilepath");
+            // printf("Command: get, %s\n", clientMessage.message);
+
+            fullFilepath = strcat(g_path, "/");
+            printf("%s\n",fullFilepath);
+            fullFilepath = strcat(fullFilepath, clientMessage.message);
+            printf("%s",fullFilepath);
+
+            stat(fullFilepath, &obj);	
+			filefd = open(fullFilepath, O_RDONLY);			// Open the file
+            printf("%i", filefd);
+			
+			// if (filefd < 0) { 
+            //     perror("get"); 
+            //     serverMessage.opCode = '2';
+            //     serverMessage.ackCode = '1';
+            //     strcpy(serverMessage.message, "");
+            // }
+            // else{
+                filelength = obj.st_size;
+                char fileBuffer[filelength];	
+                
+                read(filefd, &fileBuffer, filelength);
+                // printf(" %s\n", fileBuffer); 
+                // serverMessage.opCode = '2';
+                // serverMessage.ackCode = '0';
+                // serverMessage.messageSize = sizeof(filelength);
+                // strcpy(serverMessage.message, fileBuffer);
+                int fl = filelength;
+                char c[100];
+                sprintf(c, "%li", filelength);
+                printf("c --- %s", c);
+                write(sd, c, sizeof(c));
+                printf("c- %s", c);
+
+                while (fl > 0){
+                    nw = write(sd, fileBuffer, filelength);
+                    fl -=nw;
+                    sprintf(log, "server[%d]: %d bytes sent", i, nw);
+                    logger(log);
+                    // printf("%i\n", nw);
+                }
+                printf("get finished\n");
+                sprintf(log, "server[%d]: get completed\n", i); 
+                logger(log);
+        }
+        else if (clientMessage.opCode == '7'){
+            sprintf(log, "server[%d]: received command put \n", i); 
+            logger(log);
+            // printf("Command: put, %s\n", clientMessage.message);
+
+            fullFilepath = strcat(g_path, "/");
+            printf("%s\n",fullFilepath);
+            fullFilepath = strcat(fullFilepath, clientMessage.message);
+            printf("%s",fullFilepath);
+            //only if the file does not exist
+            if (stat(fullFilepath, &obj) != 0)	{
+                serverMessage.opCode = '7';
+                serverMessage.ackCode = 0;
+                write(sd, &serverMessage, sizeof(serverMessage));
+
+                int fd = open(fullFilepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd < 0) 
+                { 
+                    printf("%s", fullFilepath);
+                    perror("server get"); 
+                } 
+
+                char  buffer[100];
+                int recvFileSize;
+                read(sd, &buffer, 100);
+                recvFileSize = atoi(buffer);
+
+                // receivedFile = fopen(locate, "w");
+
+                // printf("Message From Server: %i, %s\n", nr, serverMessage.message);
+                while (recvFileSize > 0){
+                    nr = read(sd, &msgServer, sizeof(msgServer));
+                    int sz = write(fd, msgServer, nr); 
+                    // fwrite(msgServer, sizeof(char), nr, receivedFile);
+                    recvFileSize -=nr;
+                    sprintf(log, "server[%d]: %d bytes received", i, nr);
+                    logger(log);
+                    // printf("\nFrom client: %i, %i\n", nr, sz);
+                }    
+                printf("put finished\n");
+                close(fd);
+                sprintf(log, "server[%d]: put completed\n", i); 
+                logger(log); 
+            }
+            else {
+                serverMessage.opCode = '7';
+                serverMessage.ackCode = 1;
+                write(sd, &serverMessage, sizeof(serverMessage));
+            }
+        }
+        else{
+            printf("else .. %c", clientMessage.opCode);
+        }
     } 
+    close(sd);
 }
 
 
 int main(){
-
-    // int sd, nsd, n, cli_addrlen;  pid_t pid;
-    //  struct sockaddr_in ser_addr, cli_addr; 
-     
-     /* turn the program into a daemon */
-    //  daemon_init();  
-
-     /* set up listening socket sd */
-    //  if ((sd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-    //        perror("server:socket"); exit(1);
-    //  } 
-
-    //  /* build server Internet socket address */
-    //  bzero((char *)&ser_addr, sizeof(ser_addr));
-    //  ser_addr.sin_family = AF_INET;
-    //  ser_addr.sin_port = htons(PORT);
-    //  ser_addr.sin_addr.s_addr = htonl(INADDR_ANY); 
-
-    //  /* bind server address to socket sd */
-    //  if (bind(sd, (struct sockaddr *) &ser_addr, sizeof(ser_addr))<0){
-    //        perror("server bind"); exit(1);
-    //  }
-
-    //  /* become a listening socket */
-    //  listen(sd, 5);
-
-//      while (1) {
-
-//           /* wait to accept a client request for connection */
-//           cli_addrlen = sizeof(cli_addr);
-//           nsd = accept(sd, (struct sockaddr *) &cli_addr, &cli_addrlen);
-//           if (nsd < 0) {
-//                perror("server:accept"); exit(1);
-//           }
-
-//           /* create a child process to handle this client */
-//           if ((pid=fork()) <0) {
-//               perror("fork"); exit(1);
-//           } else if (pid > 0) { 
-//               close(nsd);
-//               continue; /* parent to wait for next client */
-//           }
-
-//           /* now in child, serve the current client */
-//           close(sd); serveClient(nsd);
-//      }
-// */
-
     int socketfd, connectionfd, cli_addrlen;
     pid_t pid;
     int runFlag = 1;
@@ -150,75 +357,33 @@ int main(){
     char buffer[100];
     int addrlen = sizeof(struct sockaddr_in);
 
+    logger("\nStarting Daemon Server\n");
+    printf("Strating myftpd\n");
+    initDaemon();
     // initilise the server
     socketfd = initServer();
 
-
-
-
-
-
-
-
-    //accept the data pkt from client
-    // printf("Socketfd: %i\n", socketfd);
-    // if ((connectionfd = accept(socketfd, (struct sockaddr *)&clientaddr, (socklen_t *)&addrlen)) < 0) {
-    //     printf("Error: Accept Failed\n");
-    //     exit(0);
-    // }
-    // else
-    //     printf("Success: acccepted the client...\n");
-
     while (1) {
 
-          /* wait to accept a client request for connection */
-           cli_addrlen = sizeof(clientaddr);
-           connectionfd = accept(socketfd, (struct sockaddr *) &clientaddr, (socklen_t *)&cli_addrlen);
+        //wait to accept a client 
+        cli_addrlen = sizeof(clientaddr);
+        connectionfd = accept(socketfd, (struct sockaddr *) &clientaddr, (socklen_t *)&cli_addrlen);
 
-          /* create a child process to handle this client */
-          if ((pid=fork()) <0) {
-              perror("fork"); exit(1);
-          } else if (pid > 0) { 
-              close(connectionfd);
-              continue; /* parent to wait for next client */
-          }
+        // create a child process to 
+        if ((pid=fork()) <0) {
+            perror("fork"); exit(1);
+        } else if (pid > 0) { 
+            close(connectionfd);
+            continue; //parent, for next client accept
+        }
 
-          /* now in child, serve the current client */
-          close(socketfd); 
-          serveClient(connectionfd);
-     }
+        // serve the current client 
+        close(socketfd); 
+        logger("server: Serving a new client\n");
+        serveClient(connectionfd);
+    }
 
-    // while(runFlag == 1)
-    // {
-	//     printf("reading value...\n");
-    //     command_buffer = malloc(100 * sizeof(char));
-    //     if( (read(connectionfd, buffer, 100)) < 0)
-    //     {
-    //         perror("Read error!!!\n");
-    //     }
-    //     printf("buffer: %s \n", buffer);
-    //     strcpy(command_buffer, buffer);
-    //     printf("command buffer: %s \n", command_buffer);
+    logger("\nTerminating the Server\n");
 
-	
-    //     // if(strcmp(command_buffer, "pwd") == 0)
-    //     // {
-    //     //     runFlag = run_cmd(connectionfd);
-    //     // }
-    //     // else if(strcmp(command_buffer, "dir") == 0)
-    //     // {
-    //     //     runFlag = run_cmd(connectionfd);
-    //     // }
-    //     // else if(strcmp(command_buffer, "Quit") == 0)
-    //     // {
-    //     //     runFlag = 0;
-    //     // }
-    //     // free(command_buffer);
-    // }
-
-    // for (;;) { }
-
-    //close the socket
-    // close(socketfd);
     return 0;
 }

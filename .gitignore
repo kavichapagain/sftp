@@ -1,0 +1,12 @@
+# Object files
+*.o
+*.obj
+
+# Executables
+*.out
+
+#others
+log.txt
+temp.txt
+myftp
+myftpd
