@@ -36,5 +36,5 @@ Server is named as myftpd. The 'd' in myftp means it runs as a daemon process.
 
 - - - -
 
-*ICT374 - Operating Sytems and System Programming **(Project)***
+*ICT374 - Operating Systems and Systems Programming **(Project)***
 
