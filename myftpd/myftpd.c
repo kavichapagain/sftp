@@ -1,5 +1,4 @@
-//
-// server.c
+//Kavi Chapagain
 //
 
 #include <sys/socket.h>
@@ -151,13 +150,6 @@ void serveClient(int sd)
         if ((nr = read(sd, &clientMessage, 1024)) <= 0) 
             exit(0);   /* connection broken down */
 
-        // printf("%c\n", clientMessage.opCode);
-        // printf("message nr %i\n", nr);
-        // printf("size %i\n", clientMessage.messageSize);
-
-        // printf("message nr %i", nr);
-        // printf("message %s\n", clientMessage.message);
-        // msgStruct cliMsg = (msgStruct)clientMessage;
 
         if (clientMessage.opCode == '0') {
             // logger("Command: pwd\n");
@@ -168,11 +160,7 @@ void serveClient(int sd)
             write(sd, fileLenStr, sizeof(fileLenStr));
             
             nw = write(sd, g_path, sizeof(g_path));
-            // serverMessage.opCode = '0';
-            // serverMessage.messageSize = sizeof(g_path);
-            // strcpy(serverMessage.message, g_path);
-            // // strcpy(sendBuffer, g_path);
-            // nw = write(sd, &serverMessage, sizeof(serverMessage));
+            
             sprintf(log, "server[%d]: completed. %d bytes sent out\n", i, nw); 
             logger(log);
         }
@@ -194,18 +182,10 @@ void serveClient(int sd)
                 toClientSize = read(filefd, fileBuffer, filelength);
 
                 sprintf(fileLenStr, "%li", filelength);
-                printf("c --- %s", fileLenStr);
                 write(sd, fileLenStr, sizeof(fileLenStr));
                 
                 nw = write(sd, fileBuffer, sizeof(fileBuffer));
                 printf("server[%d]: %d bytes sent out, %s\n", i, nw, fileBuffer); 
-
-                // serverMessage.opCode = '2';
-                // serverMessage.ackCode = '0';
-                // serverMessage.messageSize = sizeof(filelength);
-                // strcpy(serverMessage.message, fileBuffer);
-                // printf("toclisize: %i,filelen: %s", toClientSize, serverMessage.message);
-
 
             } 
             sprintf(log, "server[%d]: completed. %d bytes sent out\n", i, nw); 
@@ -244,61 +224,71 @@ void serveClient(int sd)
         else if(clientMessage.opCode == '6'){
             sprintf(log, "server[%d]: received command get \n", i); 
             logger(log);
-            // printf("%s","fullFilepath");
-            // printf("Command: get, %s\n", clientMessage.message);
-
             fullFilepath = strcat(g_path, "/");
-            printf("%s\n",fullFilepath);
             fullFilepath = strcat(fullFilepath, clientMessage.message);
-            printf("%s",fullFilepath);
 
-            stat(fullFilepath, &obj);	
-			filefd = open(fullFilepath, O_RDONLY);			// Open the file
-            printf("%i", filefd);
-			
-			// if (filefd < 0) { 
-            //     perror("get"); 
-            //     serverMessage.opCode = '2';
-            //     serverMessage.ackCode = '1';
-            //     strcpy(serverMessage.message, "");
-            // }
-            // else{
-                filelength = obj.st_size;
-                char fileBuffer[filelength];	
+            if(stat(fullFilepath, &obj) == 0){	
+                filefd = open(fullFilepath, O_RDONLY);			// Open the file
                 
-                read(filefd, &fileBuffer, filelength);
-                // printf(" %s\n", fileBuffer); 
-                // serverMessage.opCode = '2';
-                // serverMessage.ackCode = '0';
-                // serverMessage.messageSize = sizeof(filelength);
-                // strcpy(serverMessage.message, fileBuffer);
-                int fl = filelength;
-                char c[100];
-                sprintf(c, "%li", filelength);
-                printf("c --- %s", c);
-                write(sd, c, sizeof(c));
-                printf("c- %s", c);
+                if (filefd < 0) { 
+                    perror("get"); 
+                    serverMessage.opCode = '6';
+                    serverMessage.ackCode = 1;
 
-                while (fl > 0){
-                    nw = write(sd, fileBuffer, filelength);
-                    fl -=nw;
-                    sprintf(log, "server[%d]: %d bytes sent", i, nw);
+                    char c[100];
+                    sprintf(c, "%i", 1);
+                    write(sd, c, sizeof(c));
+                    sprintf(log, "server[%d]: cannot open the file", i);
                     logger(log);
-                    // printf("%i\n", nw);
+                    printf("%s", log);
+
+                    // strcpy(serverMessage.message, "Error");
+                    // serverMessage.me
+                    // write(sd, &serverMessage, sizeof(serverMessage));
+                }
+                else{
+                    filelength = obj.st_size;
+                    char fileBuffer[filelength];	
+                    
+                    int r =read(filefd, &fileBuffer, filelength);
+
+                    serverMessage.opCode = '6';
+                    serverMessage.ackCode = 0;
+                    serverMessage.messageSize = sizeof(filelength);
+                    // strcpy(serverMessage.message, fileBuffer);
+
+                    long fl = filelength;
+
+                    char c[100];
+                    sprintf(c, "%lli", filelength);
+                    write(sd, c, sizeof(c));
+                    while (fl > 0){
+                        nw = write(sd, fileBuffer, filelength);
+                        fl -=nw;
+                        sprintf(log, "server[%d]: %d bytes sent", i, nw);
+                        logger(log);
+                    }
                 }
                 printf("get finished\n");
-                sprintf(log, "server[%d]: get completed\n", i); 
-                logger(log);
+            }
+            else {
+                perror("get"); 
+                serverMessage.opCode = '6';
+                serverMessage.ackCode = 2;
+
+                char c[100];
+                sprintf(c, "%i", 2);
+                write(sd, c, sizeof(c));
+            }
+            sprintf(log, "server[%d]: get completed\n", i); 
+            logger(log);
         }
         else if (clientMessage.opCode == '7'){
             sprintf(log, "server[%d]: received command put \n", i); 
             logger(log);
-            // printf("Command: put, %s\n", clientMessage.message);
 
             fullFilepath = strcat(g_path, "/");
-            printf("%s\n",fullFilepath);
             fullFilepath = strcat(fullFilepath, clientMessage.message);
-            printf("%s",fullFilepath);
             //only if the file does not exist
             if (stat(fullFilepath, &obj) != 0)	{
                 serverMessage.opCode = '7';
@@ -307,28 +297,31 @@ void serveClient(int sd)
 
                 int fd = open(fullFilepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 if (fd < 0) 
-                { 
-                    printf("%s", fullFilepath);
+                {
+                   
+                    serverMessage.opCode = '7';
+                    serverMessage.ackCode = 2;
+                    write(sd, &serverMessage, sizeof(serverMessage));
+            
+                    sprintf(log, "server[%d]: cannot create a file \n", i); 
+                    logger(log);
                     perror("server get"); 
+                }
+                else {
+                    char  buffer[100];
+                    int recvFileSize;
+                    read(sd, &buffer, 100);
+                    recvFileSize = atoi(buffer);
+
+                    while (recvFileSize > 0){
+                        nr = read(sd, &msgServer, sizeof(msgServer));
+                        int sz = write(fd, msgServer, nr); 
+                        recvFileSize -=nr;
+                        sprintf(log, "server[%d]: %d bytes received", i, nr);
+                        logger(log);
+                    }
                 } 
 
-                char  buffer[100];
-                int recvFileSize;
-                read(sd, &buffer, 100);
-                recvFileSize = atoi(buffer);
-
-                // receivedFile = fopen(locate, "w");
-
-                // printf("Message From Server: %i, %s\n", nr, serverMessage.message);
-                while (recvFileSize > 0){
-                    nr = read(sd, &msgServer, sizeof(msgServer));
-                    int sz = write(fd, msgServer, nr); 
-                    // fwrite(msgServer, sizeof(char), nr, receivedFile);
-                    recvFileSize -=nr;
-                    sprintf(log, "server[%d]: %d bytes received", i, nr);
-                    logger(log);
-                    // printf("\nFrom client: %i, %i\n", nr, sz);
-                }    
                 printf("put finished\n");
                 close(fd);
                 sprintf(log, "server[%d]: put completed\n", i); 
@@ -341,7 +334,7 @@ void serveClient(int sd)
             }
         }
         else{
-            printf("else .. %c", clientMessage.opCode);
+            // printf("else .. %c", clientMessage.opCode);
         }
     } 
     close(sd);
@@ -359,7 +352,7 @@ int main(){
 
     logger("\nStarting Daemon Server\n");
     printf("Strating myftpd\n");
-    initDaemon();
+    // initDaemon();
     // initilise the server
     socketfd = initServer();
 
