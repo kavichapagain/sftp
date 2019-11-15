@@ -1,4 +1,4 @@
-//
+//Kavi Chapagain
 // 
 
 #include <sys/wait.h>
@@ -20,13 +20,14 @@
 // Global that holds current directory client
 char g_path[255];
 
-//Message structure
+//Message structure client
 typedef struct {
     char opCode;
     int messageSize;
     char message[512];
 } msgStruct;
 
+//Message structure server
 typedef struct {
     char opCode;
     int messageSize;
@@ -53,7 +54,7 @@ int initClient()
         close(socketfd);
         return -1;
     }
-    printf("Client: Created a socket successfully, socketfd: %i\n", socketfd);
+    printf("Client: Created a socket successfully\n");
 
     bzero(&serverAddress, sizeof(serverAddress)); //mem
 
@@ -182,7 +183,7 @@ int main(int argc, char* argv[]) {
             buffer[strcspn(buffer, "\n")] = 0;
             
             totTokens = tokenise(buffer, token);
-            
+            isValidCommand = false;
             //check if the command is valid using the loop
             for (int i = 0; i < 9; i++){
                 if(strcmp(token[0], commands[i]) == 0){
@@ -200,6 +201,12 @@ int main(int argc, char* argv[]) {
                     else if (i == 1 || i == 3 || i == 5){
                         sprintf(log, "client[%d]: Received client command %s", count, commands[i]);
                         logger(log);
+                        if (totTokens < 2 && i == 5)  {
+                            sprintf(log, "client[%d]: Path not provided", count);
+                            logger(log); 
+                            perror("No path provided");
+                            continue;
+                        }
                         token[0] = commands[i-1];
                         // printf("%s\n", token[0]);
                         execClientCommands(i, token, totTokens); // call command handler func
@@ -247,21 +254,13 @@ int main(int argc, char* argv[]) {
 
                         write(socketfd, &clientMsg, sizeof(clientMsg));
 
-                        // char  buffer[100];
-                        // int recvFileSize;
-                        // read(socketfd, &buffer, 100);
-                        // printf("filelen: %s", buffer);
-                        // recvFileSize = atoi(buffer);
-                        // char msgServer[BUFSIZE];
-
-                        // while (recvFileSize > 0){
-                        //     nr = read(socketfd, &msgServer, sizeof(msgServer));
-                        //     // fwrite(msgServer, sizeof(char), nr, receivedFile);
-                        //     recvFileSize -=nr;
-                        //     printf("Message From Server: %i, %s\n", nr, msgServer);
-                        // }  
-                            
                         nr = read(socketfd, &serverMessage, sizeof(serverMessage));
+
+                        if(serverMessage.ackCode == 1){
+                            sprintf(log, "client[%d]: No such file or directory exist", count);
+                            logger(log); 
+                            printf("%s", log);
+                        }
                        
                         sprintf(log, "client[%d]: Completed server command %s, ack %i", count, commands[i], serverMessage.ackCode);
                         logger(log); 
@@ -283,42 +282,50 @@ int main(int argc, char* argv[]) {
                         write(socketfd, &clientMsg, sizeof(clientMsg));
 
                         char  buffer[100];
-                        int recvFileSize;
+                        long recvFileSize;
                         read(socketfd, &buffer, 100);
-                        recvFileSize = atoi(buffer);
-                        // printf("Size %s", buffer);
+                        recvFileSize = atol(buffer);
 
-                        char locate[100];
-                        char msgServer[BUFSIZE];
-                        strcpy(locate, g_path);
-                        locate[strcspn(locate, "\n")] = 0;
-                        strcat(locate, "/");
-                        strcat(locate, token[1]);
-                        //remove null byte if exsiting
-                        // locate[strlen(locate)-1] = '\0';
-                        
-
-
-                        //Gets the file name and saves to download directory
-                        int fd = open(locate, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                        if (fd < 0) 
-                        { 
-                            printf("%s", locate);
-                            perror("download"); 
-                        } 
-
-                        // receivedFile = fopen(locate, "w");
-
-                        // printf("Message From Server: %i, %s\n", nr, serverMessage.message);
-                        while (recvFileSize > 0){
-                            nr = read(socketfd, &msgServer, sizeof(msgServer));
-                            int sz = write(fd, msgServer, nr); 
-                            sprintf(log, "client[%d]: %d bytes received", count, nr);
+                        if (atoi(buffer) == 1){
+                            sprintf(log, "client[%d]: File does not exist in the server", count);
                             logger(log);
-                            recvFileSize -=nr;
-                        }    
-                        printf("Download Completed\n");
-                        close(fd); 
+                            printf("File does not exist in the server\n");
+                        }
+                        else {
+                            char locate[100];
+                            char msgServer[BUFSIZE];
+                            nr = 1;
+                            strcpy(locate, g_path);
+                            locate[strcspn(locate, "\n")] = 0;
+                            strcat(locate, "/");
+                            strcat(locate, token[1]);
+                            
+
+                            //Gets the file name and saves to download directory
+                            int fd = open(locate, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                            if (fd < 0) 
+                            { 
+                                sprintf(log, "client[%d]: cannot open the file to get", count);
+                                logger(log);
+                                printf("cannot open the file to get: %s", locate);
+                                perror("download"); 
+                            } 
+
+                            // receivedFile = fopen(locate, "w");
+
+                            while (recvFileSize > 0 && nr >0){
+                                nr = read(socketfd, &msgServer, sizeof(msgServer));
+                                int sz = write(fd, msgServer, nr); 
+                                sprintf(log, "client[%d]: %d bytes received", count, nr);
+                                logger(log);
+                                printf("%s\n",log);
+                                recvFileSize -=nr;
+                            }    
+                            printf("Download Completed\n");
+                            close(fd); 
+                        }
+
+                        
                         sprintf(log, "client[%d]: Completed server command %s, ack %i", count, commands[i], serverMessage.ackCode);
                         logger(log);
                     }
@@ -343,7 +350,9 @@ int main(int argc, char* argv[]) {
                         int fd = open(locate, O_RDONLY);			// Open the file
                         if (fd < 0) 
                         { 
-                            printf("%s", locate);
+                            sprintf(log, "client[%d]: cannot open the file to put", count);
+                            logger(log);
+                            printf("cannot read the file to put: %s", locate);
                             perror("upload"); 
                         } 
 
@@ -354,7 +363,7 @@ int main(int argc, char* argv[]) {
                         write(socketfd, &clientMsg, sizeof(clientMsg));
 
                         nr = read(socketfd, &serverMessage, sizeof(serverMessage));
-                        printf("server: %i\n", serverMessage.ackCode);
+                        printf("server:ackCode %i\n", serverMessage.ackCode);
 
                         if (serverMessage.ackCode == 0){
                             stat(locate, &statObj);
@@ -366,18 +375,13 @@ int main(int argc, char* argv[]) {
                             int fl = fileLength;
                             char c[100];
                             sprintf(c, "%li", fileLength);
-                            // printf("c --- %s", c);
-
-                        
                             write(socketfd, c, sizeof(c));
-                            // printf("c- %s", c);
 
                             while (fl > 0){
                                 int bytesWritten = write(socketfd, fileBuffer, fileLength);
                                 fl -=bytesWritten;
                                 sprintf(log, "client[%d]: %d bytes sent", count, bytesWritten);
                                 logger(log); 
-                                // printf("%i\n", bytes_written);
                             }
                             printf("Upload Completed\n");
                             close(fd);
@@ -385,7 +389,9 @@ int main(int argc, char* argv[]) {
                             logger(log); 
                         }
                         else {
-                            printf("Error from server");
+                            sprintf(log, "client[%d]: Completed server command %s, ack %i", count, commands[i], serverMessage.ackCode);
+                            logger(log); 
+                            printf("Cannot put. ackCode %d\n", serverMessage.ackCode);
                         }
 
                     }

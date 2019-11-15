@@ -24,12 +24,15 @@
 // Global that holds current directory
 char g_path[255];
 
+//client message
 typedef struct {
     char opCode;
     int messageSize;
     char message[512];
 } msgStruct;
 
+
+//server message
 typedef struct {
     char opCode;
     int messageSize;
